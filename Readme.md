@@ -14,9 +14,9 @@
 
 ### Compile the smart contract by running the following command:
 
-    ```bash
-    cargo build --release
-    ```
+```bash
+cargo build --release
+```
 
 Once the compilation is complete, locate the `*.opt.wasm` file in the `target/wasm32-unknown-unknown/release` directory.
 
