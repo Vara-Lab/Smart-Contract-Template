@@ -9,7 +9,7 @@ include!(concat!(env!("OUT_DIR"), "/wasm_binary.rs"));
 
 #[metawasm]
 pub mod metafns {
-    pub type State = <ContractMetadata as Metadata>::State;
+    pub type State = <ProgramMetadata as Metadata>::State;
 
     // Add your State functions
 
