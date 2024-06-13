@@ -1,318 +1,145 @@
 #![no_std]
-
+use gstd::{async_main, collections::HashMap, msg, prelude::*, ActorId};
 use io::*;
-use gstd::{async_main, collections::HashMap, exec, msg, prelude::*, ActorId};
 
-/// Transfers `amount` tokens from `sender` account to `recipient` account.
-/// Arguments:
-/// * `transaction_id`: associated transaction id
-/// * `from`: sender account
-/// * `to`: recipient account
-/// * `amount`: amount of tokens
-async fn transfer_tokens(
-    transaction_id: u64,
-    token_address: &ActorId,
-    from: &ActorId,
-    to: &ActorId,
-    amount_tokens: u128,
-) -> Result<(), ()> {
-    let reply = msg::send_for_reply_as::<_, FTEvent>(
-        *token_address,
-        FTAction::Transfer {
-            from: *from,
-            to: *to,
-            amount: amount_tokens,
-            },
-        0,
-        0,
-    )
-    .expect("Error in sending a message `FTokenAction::Message`")
-    .await;
+// 1. Create the main state as a static variable.
+static mut STATE: Option<CustomStruct> = None;
 
-    match reply {
-        Ok(FTEvent::Transfer {
-            from,
-            to,
-            amount,
-        }) => Ok(()),
-        _ => Err(()),
+// Create a public State
+#[derive(Clone, Default)]
+pub struct CustomStruct {
+    pub firstfield: String,
+    pub secondfield: String,
+    pub thirdfield: u128,
+    pub fourthfield: HashMap<ActorId, CustomInput> ,
+    pub fifthfield: HashMap<ActorId, u128>,
+}
+
+// Create a implementation on State
+impl CustomStruct {
+    fn firstmethod(&mut self) -> Result<Events, Errors> {
+        // Update your state with a String input
+        self.firstfield = "Hello".to_string();
+
+        Ok(Events::FirstEvent)
+    }
+
+    async fn secondmethod(&mut self, input: String) -> Result<Events, Errors> {
+        // Update your state with a String input
+        self.secondfield = input.clone();
+
+        Ok(Events::SecondEvent(input))
+    }
+
+    async fn thirdmethod(&mut self, input: u128) -> Result<Events, Errors> {
+        // Update your state with a u128 input
+        self.thirdfield = input;
+
+        Ok(Events::ThirdEvent(input))
+    }
+
+    async fn fourthmethod(&mut self, input: CustomInput) -> Result<Events, Errors> {
+        // Update your state.
+        self.fourthfield 
+            .entry(msg::source())
+            .or_insert(CustomInput {
+                firstfield: input.firstfield,
+                secondfield: input.secondfield,
+                thirdfield: input.thirdfield,
+            });
+
+        Ok(Events::SecondEvent("Event".to_string()))
+    }
+
+    async fn fifthmethod(
+        &mut self,
+        _first_field: u128,
+        _second_field: Vec<ActorId>,
+    ) -> Result<Events, Errors> {
+        // Update your state.
+        self.fifthfield
+            .entry(msg::source())
+            .and_modify(|number| *number = number.saturating_add(1))
+            .or_insert(1);
+
+        Ok(Events::SecondEvent("Event".to_string()))
     }
 }
 
-fn get_mut_wallet(wallets: &mut HashMap<WalletId, Wallet>, wallet_id: WalletId) -> &mut Wallet {
-    wallets
-        .get_mut(&wallet_id)
-        .unwrap_or_else(|| panic_wallet_not_exist(wallet_id))
-}
-
-fn reply(escrow_event: EscrowEvent) {
-    msg::reply(escrow_event, 0).expect("Error during a replying with EscrowEvent");
-}
-
-fn check_buyer_or_seller(buyer: ActorId, seller: ActorId) {
-    if msg::source() != buyer && msg::source() != seller {
-        panic!("msg::source() must be a buyer or seller");
-    }
-}
-
-fn check_buyer(buyer: ActorId) {
-    if msg::source() != buyer {
-        panic!("msg::source() must be a buyer");
-    }
-}
-
-fn check_seller(seller: ActorId) {
-    if msg::source() != seller {
-        panic!("msg::source() must be a seller");
-    }
-}
-
-fn panic_wallet_not_exist(wallet_id: WalletId) -> ! {
-    panic!("Wallet with the {wallet_id} ID doesn't exist");
-}
-
-#[derive(Default, Clone)]
-pub struct Escrow {
-    pub ft_program_id: ActorId,
-    pub wallets: HashMap<WalletId, Wallet>,
-    pub id_nonce: WalletId,
-    pub transaction_id: u64,
-    pub transactions: HashMap<u64, Option<EscrowAction>>,
-}
-
-impl Escrow {
-    pub fn create(&mut self, buyer: ActorId, seller: ActorId, amount: u128) {
-        if buyer == ActorId::zero() && seller == ActorId::zero() {
-            panic!("A buyer or seller can't have the zero address")
-        }
-        check_buyer_or_seller(buyer, seller);
-
-        let wallet_id = self.id_nonce;
-        self.id_nonce = self.id_nonce.saturating_add(WalletId::one());
-
-        if self.wallets.contains_key(&wallet_id) {
-            panic!("Wallet with the {wallet_id} already exists");
-        }
-        self.wallets.insert(
-            wallet_id,
-            Wallet {
-                buyer,
-                seller,
-                amount,
-                state: WalletState::AwaitingDeposit,
-            },
-        );
-
-        reply(EscrowEvent::Created(wallet_id));
-    }
-
-    pub async fn deposit(&mut self, transaction_id: Option<u64>, wallet_id: WalletId) {
-        let current_transaction_id = self.get_transaction_id(transaction_id);
-
-        let wallet = get_mut_wallet(&mut self.wallets, wallet_id);
-        check_buyer(wallet.buyer);
-        assert_eq!(wallet.state, WalletState::AwaitingDeposit);
-
-        if transfer_tokens(
-            current_transaction_id,
-            &self.ft_program_id,
-            &wallet.buyer,
-            &exec::program_id(),
-            wallet.amount,
-        )
-        .await
-        .is_err()
-        {
-            self.transactions.remove(&current_transaction_id);
-            reply(EscrowEvent::TransactionFailed);
-            return;
-        }
-
-        wallet.state = WalletState::AwaitingConfirmation;
-
-        self.transactions.remove(&current_transaction_id);
-
-        reply(EscrowEvent::Deposited(current_transaction_id, wallet_id));
-    }
-
-    pub async fn confirm(&mut self, transaction_id: Option<u64>, wallet_id: WalletId) {
-        let current_transaction_id = self.get_transaction_id(transaction_id);
-
-        let wallet = get_mut_wallet(&mut self.wallets, wallet_id);
-        check_buyer(wallet.buyer);
-        assert_eq!(wallet.state, WalletState::AwaitingConfirmation);
-
-        if transfer_tokens(
-            current_transaction_id,
-            &self.ft_program_id,
-            &exec::program_id(),
-            &wallet.seller,
-            wallet.amount,
-        )
-        .await
-        .is_ok()
-        {
-            wallet.state = WalletState::Closed;
-
-            self.transactions.remove(&current_transaction_id);
-
-            reply(EscrowEvent::Confirmed(current_transaction_id, wallet_id));
-        } else {
-            reply(EscrowEvent::TransactionFailed);
-        }
-    }
-
-    pub async fn refund(&mut self, transaction_id: Option<u64>, wallet_id: WalletId) {
-        let current_transaction_id = self.get_transaction_id(transaction_id);
-
-        let wallet = get_mut_wallet(&mut self.wallets, wallet_id);
-        check_seller(wallet.seller);
-        assert_eq!(wallet.state, WalletState::AwaitingConfirmation);
-
-        if transfer_tokens(
-            current_transaction_id,
-            &self.ft_program_id,
-            &exec::program_id(),
-            &wallet.buyer,
-            wallet.amount,
-        )
-        .await
-        .is_ok()
-        {
-            wallet.state = WalletState::AwaitingDeposit;
-
-            self.transactions.remove(&current_transaction_id);
-
-            reply(EscrowEvent::Refunded(current_transaction_id, wallet_id));
-        } else {
-            reply(EscrowEvent::TransactionFailed);
-        }
-    }
-
-    pub async fn cancel(&mut self, wallet_id: WalletId) {
-        let wallet = get_mut_wallet(&mut self.wallets, wallet_id);
-        check_buyer_or_seller(wallet.buyer, wallet.seller);
-        assert_eq!(wallet.state, WalletState::AwaitingDeposit);
-
-        wallet.state = WalletState::Closed;
-
-        reply(EscrowEvent::Cancelled(wallet_id));
-    }
-
-    /// Continues cached transaction by `transaction_id`.
-    ///
-    /// Execution makes sense if, when returning from an async message,
-    /// the gas ran out and the state has changed.
-    pub async fn continue_transaction(&mut self, transaction_id: u64) {
-        let transactions = self.transactions.clone();
-        let payload = &transactions
-            .get(&transaction_id)
-            .expect("Transaction does not exist");
-        if let Some(action) = payload {
-            match action {
-                EscrowAction::Deposit(wallet_id) => {
-                    self.deposit(Some(transaction_id), *wallet_id).await
-                }
-                EscrowAction::Confirm(wallet_id) => {
-                    self.confirm(Some(transaction_id), *wallet_id).await
-                }
-                EscrowAction::Refund(wallet_id) => {
-                    self.refund(Some(transaction_id), *wallet_id).await
-                }
-                _ => unreachable!(),
-            }
-        } else {
-            msg::reply(EscrowEvent::TransactionProcessed, 0)
-                .expect("Error in a reply `EscrowEvent::TransactionProcessed`");
-        }
-    }
-
-    pub fn get_transaction_id(&mut self, transaction_id: Option<u64>) -> u64 {
-        match transaction_id {
-            Some(transaction_id) => transaction_id,
-            None => {
-                let transaction_id = self.transaction_id;
-                self.transaction_id = self.transaction_id.wrapping_add(1);
-                transaction_id
-            }
-        }
-    }
-}
-
-static mut ESCROW: Option<Escrow> = None;
-
+// 3. Create the init() function of your contract.
 #[no_mangle]
-extern fn init() {
-    let config: InitEscrow = msg::load().expect("Unable to decode InitEscrow");
+extern "C" fn init() {
+    let config: InitStruct = msg::load().expect("Unable to decode InitStruct");
 
     if config.ft_program_id.is_zero() {
-        panic!("FT program address can't be 0");
+        panic!("InitStruct program address can't be 0");
     }
 
-    let escrow = Escrow {
-        ft_program_id: config.ft_program_id,
+    let state = CustomStruct {
         ..Default::default()
     };
-    unsafe {
-        ESCROW = Some(escrow);
-    }
+
+    unsafe { STATE = Some(state) };
 }
 
+// 4.Create the main() function of your contract.
 #[async_main]
 async fn main() {
-    let action: EscrowAction = msg::load().expect("Unable to decode EscrowAction");
-    let escrow = unsafe { ESCROW.get_or_insert(Default::default()) };
-    match action {
-        EscrowAction::Create {
-            buyer,
-            seller,
-            amount,
-        } => escrow.create(buyer, seller, amount),
-        EscrowAction::Deposit(wallet_id) => {
-            escrow
-                .transactions
-                .insert(escrow.transaction_id, Some(action));
-            escrow.deposit(None, wallet_id).await
-        }
-        EscrowAction::Confirm(wallet_id) => {
-            escrow
-                .transactions
-                .insert(escrow.transaction_id, Some(action));
-            escrow.confirm(None, wallet_id).await
-        }
-        EscrowAction::Refund(wallet_id) => {
-            escrow
-                .transactions
-                .insert(escrow.transaction_id, Some(action));
-            escrow.refund(None, wallet_id).await
-        }
-        EscrowAction::Cancel(wallet_id) => escrow.cancel(wallet_id).await,
-        EscrowAction::Continue(transaction_id) => escrow.continue_transaction(transaction_id).await,
-    }
+    // We load the input message
+    let action: Actions = msg::load().expect("Could not load Action");
+
+    let state: &mut CustomStruct =
+        unsafe { STATE.as_mut().expect("The contract is not initialized") };
+
+    // We receive an action from the user and update the state. Example:
+
+    let reply = match action {
+        Actions::FirstAction => state.firstmethod(), // Here, we call the implementation
+        Actions::SecondAction(input) => state.secondmethod(input).await, // Here, we call the implementation
+        Actions::ThirdAction(input) => state.thirdmethod(input).await, // Here, we call the implementation
+        Actions::Fourthaction(input) => state.fourthmethod(input).await, // Here, we call the implementation
+        Actions::Fifthaction {
+            first_field,
+            second_field, 
+        } => state.fifthmethod(first_field, second_field).await,
+    };
+    msg::reply(reply, 0).expect("Error in sending a reply");
 }
 
+// 5. Create the state() function of your contract.
 #[no_mangle]
-extern fn state() {
-    let escrow = unsafe { ESCROW.take().expect("Uninitialized Escrow state") };
-    msg::reply::<EscrowState>(escrow.into(), 0).expect("Failed to share state");
+extern "C" fn state() {
+    let state = unsafe { STATE.take().expect("Unexpected error in taking state") };
+
+    msg::reply::<IoCustomStruct>(state.into(), 0).expect(
+        "Failed to encode or reply with `<ContractMetadata as Metadata>::State` from `state()`",
+    );
 }
 
-impl From<Escrow> for EscrowState {
-    fn from(state: Escrow) -> Self {
+// Implementation of the From trait for converting CustomStruct to IoCustomStruct
+impl From<CustomStruct> for IoCustomStruct {
+    // Conversion method
+    fn from(value: CustomStruct) -> Self {
+        // Destructure the CustomStruct object into its individual fields
+        let CustomStruct {
+            firstfield,
+            secondfield,
+            thirdfield,
+            fourthfield,
+            fifthfield,
+        } = value;
+
+        // Perform some transformation, cloning its elements
+        let fourthfield = fourthfield.iter().map(|(k, v)| (*k, v.clone())).collect();
+        let fifthfield = fifthfield.iter().map(|(k, v)| (*k, v.clone())).collect();
+
+        // Create a new IoCustomStruct object using the destructured fields
         Self {
-            ft_program_id: state.ft_program_id,
-            wallets: state
-                .wallets
-                .iter()
-                .map(|(id, wallet)| (*id, *wallet))
-                .collect(),
-            id_nonce: state.id_nonce,
-            transaction_id: state.transaction_id,
-            transactions: state
-                .transactions
-                .iter()
-                .map(|(a, b)| (*a, b.clone()))
-                .collect(),
+            firstfield,
+            secondfield,
+            thirdfield,
+            fourthfield,
+            fifthfield,
         }
     }
 }
