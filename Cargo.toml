@@ -15,9 +15,6 @@ io.workspace = true
 gear-wasm-builder.workspace = true
 io.workspace = true
 
-[workspace]
-members = ["state"]
-
 [workspace.package]
 version = "0.1.3"
 edition = "2021"
