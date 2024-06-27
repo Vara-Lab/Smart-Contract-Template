@@ -1,6 +1,6 @@
 #![no_std]
 
-use gmeta::{In, InOut, Metadata, Out};
+use gmeta::{In, InOut, Metadata};
 use gstd::{prelude::*, ActorId};
 
 pub struct ProgramMetadata;
@@ -12,7 +12,7 @@ impl Metadata for ProgramMetadata {
     type Others = ();
     type Reply = ();
     type Signal = ();
-    type State = Out<IoCustomStruct>;
+    type State = InOut<Query, QueryReply>;
 }
 
 // 2. Create your init Struct(Optional)
@@ -88,4 +88,33 @@ pub struct IoCustomStruct {
     pub thirdfield: u128,
     pub fourthfield: Vec<(ActorId, CustomInput)> ,
     pub fifthfield: Vec<(ActorId, u128)> ,
+}
+
+
+// 7. Create your State Querys
+#[derive(Encode, Decode, TypeInfo)]
+#[codec(crate = gstd::codec)]
+#[scale_info(crate = gstd::scale_info)]
+pub enum Query {
+    All,
+    FirstField,
+    SecondField,
+    ThirdField,
+    FourthField{ actor_id: ActorId },
+    FifthField{ actor_id: ActorId }
+    
+}
+
+// 8. Create your State Query Replys
+#[derive(Encode, Decode, TypeInfo)]
+#[codec(crate = gstd::codec)]
+#[scale_info(crate = gstd::scale_info)]
+pub enum QueryReply {
+    All(IoCustomStruct),
+    FirstField(String),
+    SecondField(String),
+    ThirdField(u128),
+    FourthField(Option<CustomInput>),
+    FifthField(Option<u128>)
+ 
 }
