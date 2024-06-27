@@ -92,7 +92,6 @@ async fn main() {
         unsafe { STATE.as_mut().expect("The contract is not initialized") };
 
     // We receive an action from the user and update the state. Example:
-
     let reply = match action {
         Actions::FirstAction => state.firstmethod(), // Here, we call the implementation
         Actions::SecondAction(input) => state.secondmethod(input).await, // Here, we call the implementation
@@ -110,10 +109,17 @@ async fn main() {
 #[no_mangle]
 extern "C" fn state() {
     let state = unsafe { STATE.take().expect("Unexpected error in taking state") };
+    let query: Query = msg::load().expect("Unable to decode the query");
+    let reply = match query {
+        Query::All => QueryReply::All(state.into()),
+        Query::FirstField => QueryReply::FirstField(state.firstfield.clone()),
+        Query::SecondField => QueryReply::SecondField(state.secondfield.clone()),
+        Query::ThirdField => QueryReply::ThirdField(state.thirdfield.clone()),
+        Query::FourthField{actor_id} => QueryReply::FourthField(state.fourthfield.get(&actor_id).cloned()),
+        Query::FifthField{actor_id} => QueryReply::FifthField(state.fifthfield.get(&actor_id).cloned()),
+    };
 
-    msg::reply::<IoCustomStruct>(state.into(), 0).expect(
-        "Failed to encode or reply with `<ContractMetadata as Metadata>::State` from `state()`",
-    );
+    msg::reply(reply, 0).expect("Error on sharinf state");
 }
 
 // Implementation of the From trait for converting CustomStruct to IoCustomStruct
@@ -130,8 +136,8 @@ impl From<CustomStruct> for IoCustomStruct {
         } = value;
 
         // Perform some transformation, cloning its elements
-        let fourthfield = fourthfield.iter().map(|(k, v)| (*k, v.clone())).collect();
-        let fifthfield = fifthfield.iter().map(|(k, v)| (*k, v.clone())).collect();
+        let fourthfield = fourthfield.into_iter().collect();
+        let fifthfield = fifthfield.into_iter().collect();
 
         // Create a new IoCustomStruct object using the destructured fields
         Self {
